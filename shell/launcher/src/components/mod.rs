@@ -1,11 +1,13 @@
 pub mod homescreen;
 pub mod navigation_bar;
+pub mod screenshot;
 pub mod settings_drawer;
 pub mod status_bar;
 pub mod universal_search;
 
 pub use homescreen::*;
 pub use navigation_bar::*;
+pub use screenshot::*;
 pub use settings_drawer::*;
 pub use status_bar::*;
 pub use universal_search::*;

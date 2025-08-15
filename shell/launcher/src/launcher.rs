@@ -19,7 +19,7 @@ use bevy_styled_widgets::{
 };
 
 use crate::components::{
-    FrequentlyUsedApps, RecentSearches, SettingsDrawerPlugin, settings_drawer, universal_search,
+    FrequentlyUsedApps, RecentSearches, ScreenshotPlugin, ScreenshotUiPlugin, SettingsDrawerPlugin, settings_drawer, universal_search,
 };
 use crate::utils::Icon;
 use crate::{
@@ -127,7 +127,8 @@ pub fn run_launcher() {
             DesktopAppsPlugin,
             // SpritesButtonPlugin,
             LauncherStyledWidgetsPlugin,
-            SettingsDrawerPlugin, // StyledTextPlugin,
+            SettingsDrawerPlugin,
+            ScreenshotUiPlugin, // StyledTextPlugin,
                                   // Custom plugin for organizing UI setup
         ))
         .add_plugins(NetworkManagerPlugin)
