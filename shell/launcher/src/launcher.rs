@@ -438,7 +438,7 @@ fn spawn_search(
     ));
 }
 
-fn spawn_camera(
+pub fn spawn_camera(
     commands: &mut Commands,
     width: u32,
     height: u32,
