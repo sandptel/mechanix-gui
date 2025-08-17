@@ -1,12 +1,9 @@
-use bevy::{ ecs::system::SystemId, prelude::* };
+use bevy::prelude::*;
 use bevy_smithay::{
-    SmithayWindowType,
     prelude::{ layer_shell::LayerShellSettings, subsurface::Anchor },
 };
-use bevy_styled_widgets::prelude::{ ButtonVariant, StyledButton, StyledText };
 use crate::launcher::spawn_camera;
-use super::plugin::ScreenshotEvent;
-use crate::styled_card::StyledCard;
+use super::plugin::{CurrentScreenshotImage, save_image_as_png};
 use super::plugin::ScreenshotPlugin;
 
 #[derive(Component)]
@@ -24,74 +21,80 @@ pub struct DeleteButton;
 #[derive(Component)]
 pub struct CopyButton;
 
+#[derive(Component)]
+pub struct SaveDialog;
+
+#[derive(Component)]
+pub struct DialogOverlay;
+
+#[derive(Component)]
+pub struct DialogTimer(pub Timer);
+
 pub struct ScreenshotUiPlugin;
 
 impl Plugin for ScreenshotUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, trigger_screenshot_window)
+        app.add_systems(Update, trigger_screenshot_window.run_if(resource_exists_and_changed::<CurrentScreenshotImage>))
             .add_systems(
                 Update,
-                spawn_screenshot_ui.run_if(resource_exists_and_changed::<ScreenshotWindowSurface>)
+                spawn_screenshot_ui.run_if(resource_exists::<ScreenshotWindowSurface>)
             )
             .add_systems(Update, despawn_screenshot_window)
             .add_systems(Update, (
                 save_button_interaction,
                 delete_button_interaction,
                 copy_button_interaction,
+                auto_hide_dialogs,
             ))
             .add_plugins(ScreenshotPlugin);
     }
 }
 
-use std::path::PathBuf;
 
 #[derive(Resource)]
-pub struct ScreenshotWindowSurface(pub Entity, pub Handle<Image>);
+pub struct ScreenshotWindowSurface(pub Entity);
 
 fn trigger_screenshot_window(
     mut commands: Commands,
-    mut screenshot_events: EventReader<ScreenshotEvent>,
-    asset_server: Res<AssetServer>
+    _current_screenshot: Res<CurrentScreenshotImage>,
+    existing_overlays: Query<Entity, With<ScreenshotOverlay>>,
+    _existing_window: Option<Res<ScreenshotWindowSurface>>,
 ) {
-    for _event in screenshot_events.read() {
-        // Close any existing overlay first
-        // for entity in q_existing_overlay.iter() {
-        //     commands.entity(entity).despawn_recursive();
-        // }
+    // Check if we already have an overlay, if so, stack on top
+    if !existing_overlays.is_empty() {
+        println!("Screenshot overlay already exists, creating new overlay on top");
+    }
 
-        let camera_entity = spawn_camera(
-            &mut commands,
-            540,
-            531,
-            "Screenshot Overlay".to_string(),
-            LayerShellSettings {
-                layer: bevy_smithay::prelude::subsurface::Layer::Overlay,
-                anchor: Anchor::LEFT | Anchor::RIGHT | Anchor::TOP,
-                exclusive_zone: 0,
+    let camera_entity = spawn_camera(
+        &mut commands,
+        540,
+        531,
+        "Screenshot Overlay".to_string(),
+        LayerShellSettings {
+            layer: bevy_smithay::prelude::subsurface::Layer::Overlay,
+            anchor: Anchor::LEFT | Anchor::RIGHT | Anchor::TOP,
+            exclusive_zone: 0,
+            ..default()
+        },
+        ScreenshotOverlay
+    );
+
+    // Spawn transparent UI root
+    let screenshot_window_surface = commands
+        .spawn((
+            UiTargetCamera(camera_entity),
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                position_type: PositionType::Absolute,
                 ..default()
             },
-            ScreenshotOverlay
-        );
-
-        // Spawn transparent UI root
-        let screenshot_window_surface = commands
-            .spawn((
-                UiTargetCamera(camera_entity),
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    position_type: PositionType::Absolute,
-                    ..default()
-                },
-                ScreenshotWindow,
-                BackgroundColor(Color::BLACK),
-            ))
-            .id();
-        let screenshot_asset = asset_server.load("icons/camera.png");
-        commands.insert_resource(
-            ScreenshotWindowSurface(screenshot_window_surface, screenshot_asset)
-        );
-    }
+            ScreenshotWindow,
+            BackgroundColor(Color::BLACK),
+        ))
+        .id();
+    
+    commands.insert_resource(ScreenshotWindowSurface(screenshot_window_surface));
 }
 
 // fn
@@ -132,9 +135,12 @@ fn despawn_screenshot_window(
 fn spawn_screenshot_ui(
     mut commands: Commands,
     screenshot_window: Res<ScreenshotWindowSurface>,
+    current_screenshot: Option<Res<CurrentScreenshotImage>>,
     asset_server: Res<AssetServer>
 ) {
-    let screenshot_image = screenshot_window.1.clone();
+    // Only spawn UI when we have screenshot data
+    let current_screenshot = current_screenshot.unwrap();
+    let screenshot_image = current_screenshot.image.clone();
 
     // Load button icons
     let save_icon = asset_server.load("icons/screenshot_save.png"); // Using camera icon as placeholder for save
@@ -165,8 +171,8 @@ fn spawn_screenshot_ui(
                     children![(
                         ImageNode::new(screenshot_image),
                         Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
+                            width: Val::Auto,
+                            height: Val::Auto,
                             ..Default::default()
                         },
                     )],
@@ -251,12 +257,55 @@ fn spawn_screenshot_ui(
 }
 
 fn save_button_interaction(
-    mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<SaveButton>)>
+    mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<SaveButton>)>,
+    current_screenshot: Option<Res<CurrentScreenshotImage>>,
+    images: Res<Assets<Image>>,
+    mut commands: Commands,
+    screenshot_window: Option<Res<ScreenshotWindowSurface>>,
+    existing_dialog: Query<Entity, With<SaveDialog>>,
 ) {
     for interaction in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
                 println!("Save button was pressed");
+                
+                if let Some(current_screenshot) = &current_screenshot {
+                    if let Some(image) = images.get(&current_screenshot.image) {
+                        // First try to save the image
+                        match save_image_as_png(image, &current_screenshot.output_path) {
+                            Ok(()) => {
+                                println!("Screenshot saved successfully");
+                                
+                                // Remove any existing dialog first
+                                for entity in existing_dialog.iter() {
+                                    commands.entity(entity).despawn();
+                                }
+                                
+                                // Spawn save success dialog
+                                if let Some(window) = &screenshot_window {
+                                    spawn_save_dialog(&mut commands, window.0);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to save screenshot: {}", e);
+                                
+                                // Remove any existing dialog first
+                                for entity in existing_dialog.iter() {
+                                    commands.entity(entity).despawn();
+                                }
+                                
+                                // Spawn error dialog
+                                if let Some(window) = &screenshot_window {
+                                    spawn_error_dialog(&mut commands, window.0, &format!("Failed to save: {}", e));
+                                }
+                            }
+                        }
+                    } else {
+                        eprintln!("Screenshot image not found in assets");
+                    }
+                } else {
+                    eprintln!("No screenshot data available");
+                }
             }
             _ => {}
         }
@@ -264,12 +313,25 @@ fn save_button_interaction(
 }
 
 fn delete_button_interaction(
-    mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<DeleteButton>)>
+    mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<DeleteButton>)>,
+    current_screenshot: Option<Res<CurrentScreenshotImage>>,
+    mut commands: Commands,
 ) {
     for interaction in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
                 println!("Delete button was pressed");
+                if let Some(current_screenshot) = &current_screenshot {
+                    // Try to delete the file if it exists
+                    if current_screenshot.output_path.exists() {
+                        match std::fs::remove_file(&current_screenshot.output_path) {
+                            Ok(()) => println!("Screenshot file deleted successfully"),
+                            Err(e) => eprintln!("Failed to delete screenshot file: {}", e),
+                        }
+                    }
+                    // Remove the resource
+                    commands.remove_resource::<CurrentScreenshotImage>();
+                }
             }
             _ => {}
         }
@@ -287,6 +349,94 @@ fn copy_button_interaction(
             _ => {}
         }
     }
+}
+
+fn auto_hide_dialogs(
+    mut commands: Commands,
+    mut dialog_query: Query<(Entity, &mut DialogTimer), With<SaveDialog>>,
+    time: Res<Time>,
+) {
+    for (entity, mut timer) in dialog_query.iter_mut() {
+        timer.0.tick(time.delta());
+        if timer.0.finished() {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+fn spawn_save_dialog(commands: &mut Commands, parent: Entity) {
+    let dialog = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(50.0),
+            top: Val::Percent(50.0),
+            width: Val::Px(300.0),
+            height: Val::Px(150.0),
+            margin: UiRect {
+                left: Val::Px(-150.0), // Half of width for centering
+                top: Val::Px(-75.0),   // Half of height for centering
+                ..default()
+            },
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            flex_direction: FlexDirection::Column,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.2, 0.2, 0.2, 0.9)),
+        SaveDialog,
+        DialogOverlay,
+        DialogTimer(Timer::from_seconds(3.0, TimerMode::Once)), // Auto-hide after 3 seconds
+    )).with_children(|parent| {
+        // Success message
+        parent.spawn((
+            Text::new("Screenshot saved successfully!"),
+            TextFont {
+                font_size: 18.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
+    }).id();
+    
+    commands.entity(parent).add_child(dialog);
+}
+
+fn spawn_error_dialog(commands: &mut Commands, parent: Entity, error_message: &str) {
+    let dialog = commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(50.0),
+            top: Val::Percent(50.0),
+            width: Val::Px(350.0),
+            height: Val::Px(180.0),
+            margin: UiRect {
+                left: Val::Px(-175.0), // Half of width for centering
+                top: Val::Px(-90.0),   // Half of height for centering
+                ..default()
+            },
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::all(Val::Px(20.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.8, 0.2, 0.2, 0.9)),
+        SaveDialog,
+        DialogOverlay,
+        DialogTimer(Timer::from_seconds(4.0, TimerMode::Once)), // Auto-hide after 4 seconds for errors
+    )).with_children(|parent| {
+        // Error message
+        parent.spawn((
+            Text::new(error_message),
+            TextFont {
+                font_size: 16.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
+    }).id();
+    
+    commands.entity(parent).add_child(dialog);
 }
 
 // fn spawn_screenshot_camera(

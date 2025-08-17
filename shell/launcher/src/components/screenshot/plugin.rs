@@ -1,4 +1,6 @@
 use bevy::prelude::*;
+use bevy::render::render_asset::RenderAssetUsages;
+use bevy::render::render_resource::{Extent3d, TextureDimension,TextureFormat};
 use std::time::{ Duration, SystemTime, UNIX_EPOCH };
 use image::{ codecs::png::PngEncoder, ImageEncoder };
 use tokio::sync::{ mpsc, oneshot };
@@ -13,6 +15,7 @@ use std::path::PathBuf;
 pub struct ScreenshotManager {
     runtime: Option<tokio::runtime::Runtime>,
     sender: Option<mpsc::Sender<ScreenshotRequest>>,
+    frame_receiver: Option<mpsc::Receiver<(ScreencopyFrameOutput, ScreenshotEvent)>>,
 }
 
 struct ScreenshotRequest {
@@ -25,6 +28,7 @@ impl Default for ScreenshotManager {
         Self {
             runtime: None,
             sender: None,
+            frame_receiver: None,
         }
     }
 }
@@ -33,6 +37,12 @@ impl Default for ScreenshotManager {
 pub struct ScreenshotEvent {
     pub capture_type: CaptureType,
     pub mouse_overlay: MouseOverlay,
+    pub output_path: PathBuf,
+}
+
+#[derive(Resource)]
+pub struct CurrentScreenshotImage {
+    pub image: Handle<Image>,
     pub output_path: PathBuf,
 }
 
@@ -120,7 +130,11 @@ impl Plugin for ScreenshotPlugin {
         app.insert_resource(ScreenshotManager::default())
             .add_event::<ScreenshotEvent>()
             .add_systems(Startup, setup_screenshot_handler)
-            .add_systems(Update, (handle_screenshot_input, handle_screenshot_events));
+            .add_systems(Update, (
+                handle_screenshot_input, 
+                handle_screenshot_events,
+                process_screenshot_frames
+            ));
     }
 }
 
@@ -129,6 +143,7 @@ fn setup_screenshot_handler(mut screenshot_manager: ResMut<ScreenshotManager>) {
     match tokio::runtime::Runtime::new() {
         Ok(runtime) => {
             let (request_tx, mut request_rx) = mpsc::channel::<ScreenshotRequest>(32);
+            let (frame_tx, frame_rx) = mpsc::channel::<(ScreencopyFrameOutput, ScreenshotEvent)>(32);
 
             // Spawn the persistent screenshot handler
             runtime.spawn(async move {
@@ -167,7 +182,7 @@ fn setup_screenshot_handler(mut screenshot_manager: ResMut<ScreenshotManager>) {
 
                 // Process screenshot requests
                 while let Some(request) = request_rx.recv().await {
-                    let result = handle_screenshot_request(&screencopy_msg_tx, request.event).await;
+                    let result = handle_screenshot_request(&screencopy_msg_tx, request.event, &frame_tx).await;
                     let _ = request.response.send(result);
                 }
 
@@ -178,6 +193,7 @@ fn setup_screenshot_handler(mut screenshot_manager: ResMut<ScreenshotManager>) {
 
             screenshot_manager.runtime = Some(runtime);
             screenshot_manager.sender = Some(request_tx);
+            screenshot_manager.frame_receiver = Some(frame_rx);
             println!("Screenshot plugin initialized with persistent handler");
         }
         Err(e) => {
@@ -188,7 +204,8 @@ fn setup_screenshot_handler(mut screenshot_manager: ResMut<ScreenshotManager>) {
 
 async fn handle_screenshot_request(
     screencopy_msg_tx: &mpsc::Sender<ScreencopyMessage>,
-    event: ScreenshotEvent
+    event: ScreenshotEvent,
+    bevy_app_sender: &mpsc::Sender<(ScreencopyFrameOutput, ScreenshotEvent)>
 ) -> Result<(), String> {
     println!("Processing screenshot request: {:?}", event);
 
@@ -229,7 +246,7 @@ async fn handle_screenshot_request(
             // Wait a bit more to ensure frame data is fully available
             tokio::time::sleep(Duration::from_millis(100)).await;
 
-            // Validate frame data before writing
+            // Validate frame data before processing
             match &frame_output.file {
                 Ok(data) => {
                     if data.len() == 0 {
@@ -247,7 +264,10 @@ async fn handle_screenshot_request(
                 }
             }
 
-            write_frame_to_file(frame_output, &event);
+            // Send frame data to Bevy app for processing
+            bevy_app_sender.send((frame_output, event)).await
+                .map_err(|e| format!("Failed to send frame to Bevy app: {:?}", e))?;
+
             Ok(())
         }
         Ok(Err(e)) => Err(format!("Failed to copy frame: {:?}", e)),
@@ -260,7 +280,7 @@ fn handle_screenshot_input(
     mut screenshot_events: EventWriter<ScreenshotEvent>
 ) {
     if keys.just_pressed(KeyCode::PrintScreen) {
-        screenshot_events.send(ScreenshotEvent::full_screen());
+        screenshot_events.write(ScreenshotEvent::full_screen());
     }
 }
 
@@ -293,6 +313,63 @@ fn handle_screenshot_events(
             }
         } else {
             eprintln!("Screenshot system not initialized");
+        }
+    }
+}
+
+fn process_screenshot_frames(
+    mut screenshot_manager: ResMut<ScreenshotManager>,
+    mut images: ResMut<Assets<Image>>,
+    mut commands: Commands,
+) {
+    if let Some(frame_receiver) = screenshot_manager.frame_receiver.as_mut() {
+        while let Ok((frame_output, event)) = frame_receiver.try_recv() {
+            if let Ok(data) = &frame_output.file {
+                // Create Bevy Image from frame data
+                let (final_data, final_width, final_height) = match &event.capture_type {
+                    CaptureType::FullScreen => {
+                        let data_vec = data.to_vec();
+                        (data_vec, frame_output.width, frame_output.height)
+                    }
+                    CaptureType::Region { x, y, width, height } => {
+                        let data_slice: &[u8] = &data;
+                        let cropped_data = crop_image_data(
+                            data_slice,
+                            frame_output.width,
+                            frame_output.height,
+                            *x,
+                            *y,
+                            *width,
+                            *height
+                        );
+                        (cropped_data, *width, *height)
+                    }
+                };
+
+                // Create Bevy Image
+                let bevy_image = Image::new(
+                    Extent3d {
+                        width: final_width,
+                        height: final_height,
+                        depth_or_array_layers: 1,
+                    },
+                    TextureDimension::D2,
+                    final_data,
+                    TextureFormat::Rgba8UnormSrgb,
+                    RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+                );
+
+                // Add image to assets and get handle
+                let image_handle = images.add(bevy_image);
+
+                // Store current screenshot data
+                commands.insert_resource(CurrentScreenshotImage {
+                    image: image_handle,
+                    output_path: event.output_path,
+                });
+
+                println!("Screenshot captured and converted to Bevy Image");
+            }
         }
     }
 }
@@ -410,6 +487,36 @@ fn crop_image_data(
     }
 
     cropped_data
+}
+
+/// Save a Bevy Image to a PNG file
+pub fn save_image_as_png(image: &Image, path: &PathBuf) -> Result<(), String> {
+    if let Some(data) = &image.data {
+        // Ensure the parent directory exists
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {:?}", e))?;
+        }
+
+        let file = std::fs::File::create(path)
+            .map_err(|e| format!("Failed to create file {:?}: {:?}", path, e))?;
+        
+        let png_encoder = PngEncoder::new(file);
+        
+        let width = image.texture_descriptor.size.width;
+        let height = image.texture_descriptor.size.height;
+        
+        png_encoder.write_image(
+            data,
+            width,
+            height,
+            image::ColorType::Rgba8.into()
+        ).map_err(|e| format!("Failed to encode PNG: {:?}", e))?;
+        
+        println!("Screenshot saved as: {:?}", path);
+        Ok(())
+    } else {
+        Err("Image data is None".to_string())
+    }
 }
 
 #[cfg(test)]
