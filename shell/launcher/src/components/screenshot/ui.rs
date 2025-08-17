@@ -15,6 +15,15 @@ pub struct ScreenshotWindow;
 #[derive(Component)]
 pub struct ScreenshotOverlay;
 
+#[derive(Component)]
+pub struct SaveButton;
+
+#[derive(Component)]
+pub struct DeleteButton;
+
+#[derive(Component)]
+pub struct CopyButton;
+
 pub struct ScreenshotUiPlugin;
 
 impl Plugin for ScreenshotUiPlugin {
@@ -25,6 +34,11 @@ impl Plugin for ScreenshotUiPlugin {
                 spawn_screenshot_ui.run_if(resource_exists_and_changed::<ScreenshotWindowSurface>)
             )
             .add_systems(Update, despawn_screenshot_window)
+            .add_systems(Update, (
+                save_button_interaction,
+                delete_button_interaction,
+                copy_button_interaction,
+            ))
             .add_plugins(ScreenshotPlugin);
     }
 }
@@ -37,7 +51,6 @@ pub struct ScreenshotWindowSurface(pub Entity, pub Handle<Image>);
 fn trigger_screenshot_window(
     mut commands: Commands,
     mut screenshot_events: EventReader<ScreenshotEvent>,
-    q_existing_overlay: Query<Entity, With<ScreenshotWindow>>,
     asset_server: Res<AssetServer>
 ) {
     for _event in screenshot_events.read() {
@@ -74,7 +87,6 @@ fn trigger_screenshot_window(
                 BackgroundColor(Color::BLACK),
             ))
             .id();
-        let screenshot_path = _event.output_path.clone();
         let screenshot_asset = asset_server.load("icons/camera.png");
         commands.insert_resource(
             ScreenshotWindowSurface(screenshot_window_surface, screenshot_asset)
@@ -117,36 +129,120 @@ fn despawn_screenshot_window(
 //     )
 // }
 
-fn spawn_screenshot_ui(mut commands: Commands, screenshot_window: Res<ScreenshotWindowSurface>) {
+fn spawn_screenshot_ui(
+    mut commands: Commands,
+    screenshot_window: Res<ScreenshotWindowSurface>,
+    asset_server: Res<AssetServer>
+) {
     let screenshot_image = screenshot_window.1.clone();
+
+    // Load button icons
+    let save_icon = asset_server.load("icons/screenshot_save.png"); // Using camera icon as placeholder for save
+    let delete_icon = asset_server.load("icons/screenshot_delete.png"); // Using terminal icon as placeholder for delete
+    let copy_icon = asset_server.load("icons/screenshot_copy.png"); // Using calculator icon as placeholder for copy
+
     commands.entity(screenshot_window.0).with_children(|parent| {
         parent.spawn((
             Node {
                 width: Val::Percent(100.0),
-                height: Val::Auto,
+                height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                padding: UiRect::all(Val::Percent(5.0)), // 5% padding around the entire content
                 ..default()
             },
             children![
-                (
-                    ImageNode::new(screenshot_image),
-                    Node {
-                        // add padding here instead of less width and height to add space
-                        width: Val::Percent(75.0),
-                        height: Val::Percent(75.0),
-                        ..Default::default()
-                    },
-                ),
+                // Screenshot image container
                 (
                     Node {
                         width: Val::Percent(100.0),
-                        height: Val::Auto,
-                        flex_direction: FlexDirection::Row,
+                        height: Val::Percent(95.0),
+                        align_items: AlignItems::Center,
+                        padding: UiRect::all(Val::Percent(5.0)), // Small margin between image and buttons
                         ..default()
                     },
-                    BackgroundColor(Color::WHITE),
+                    children![(
+                        ImageNode::new(screenshot_image),
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            ..Default::default()
+                        },
+                    )],
+                ),
+                // Button container box
+                (
+                    Node {
+                        width: Val::Px(540.0),
+                        height: Val::Px(106.0),
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::SpaceEvenly,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::linear_rgba(0.183, 0.183, 0.183, 1.0)),
                     children![
-
+                        // Save Button
+                        (
+                            Button::default(),
+                            Node {
+                                width: Val::Px(80.0),
+                                height: Val::Px(80.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            SaveButton,
+                            children![(
+                                ImageNode::new(save_icon),
+                                Node {
+                                    width: Val::Px(40.0),
+                                    height: Val::Px(40.0),
+                                    ..default()
+                                },
+                            )],
+                        ),
+                        // Delete Button
+                        (
+                            Button::default(),
+                            Node {
+                                width: Val::Px(80.0),
+                                height: Val::Px(80.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            DeleteButton,
+                            children![(
+                                ImageNode::new(delete_icon),
+                                Node {
+                                    width: Val::Px(40.0),
+                                    height: Val::Px(40.0),
+                                    ..default()
+                                },
+                            )],
+                        ),
+                        // Copy Button
+                        (
+                            Button::default(),
+                            Node {
+                                width: Val::Px(80.0),
+                                height: Val::Px(80.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            CopyButton,
+                            children![(
+                                ImageNode::new(copy_icon),
+                                Node {
+                                    width: Val::Px(40.0),
+                                    height: Val::Px(40.0),
+                                    ..default()
+                                },
+                            )],
+                        )
                     ],
                 )
             ],
@@ -154,7 +250,44 @@ fn spawn_screenshot_ui(mut commands: Commands, screenshot_window: Res<Screenshot
     });
 }
 
-fn spawn_screenshot_overlay_window(commands: &mut Commands) {}
+fn save_button_interaction(
+    mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<SaveButton>)>
+) {
+    for interaction in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                println!("Save button was pressed");
+            }
+            _ => {}
+        }
+    }
+}
+
+fn delete_button_interaction(
+    mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<DeleteButton>)>
+) {
+    for interaction in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                println!("Delete button was pressed");
+            }
+            _ => {}
+        }
+    }
+}
+
+fn copy_button_interaction(
+    mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<CopyButton>)>
+) {
+    for interaction in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                println!("Copy button was pressed");
+            }
+            _ => {}
+        }
+    }
+}
 
 // fn spawn_screenshot_camera(
 //     commands: &mut Commands,
