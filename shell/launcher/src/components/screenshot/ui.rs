@@ -23,6 +23,9 @@ pub struct CopyButton;
 pub struct SaveDialog;
 
 #[derive(Component)]
+pub struct DeleteDialog;
+
+#[derive(Component)]
 pub struct DialogOverlay;
 
 #[derive(Component)]
@@ -147,7 +150,9 @@ fn spawn_screenshot_ui(
     asset_server: Res<AssetServer>
 ) {
     // Only spawn UI when we have screenshot data
-    let current_screenshot = current_screenshot.unwrap();
+    let Some(current_screenshot) = current_screenshot else {
+        return;
+    };
     let screenshot_image = current_screenshot.image.clone();
 
     // Load button icons
@@ -312,22 +317,27 @@ fn save_button_interaction(
 fn delete_button_interaction(
     mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<DeleteButton>)>,
     current_screenshot: Option<Res<CurrentScreenshotImage>>,
-    mut commands: Commands
+    mut commands: Commands,
+    screenshot_window: Option<Res<ScreenshotWindowSurface>>,
+    existing_dialog: Query<Entity, Or<(With<SaveDialog>, With<DeleteDialog>)>>,
 ) {
     for interaction in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
                 println!("Delete button was pressed");
-                if let Some(current_screenshot) = &current_screenshot {
-                    // Try to delete the file if it exists
-                    if current_screenshot.output_path.exists() {
-                        match std::fs::remove_file(&current_screenshot.output_path) {
-                            Ok(()) => println!("Screenshot file deleted successfully"),
-                            Err(e) => eprintln!("Failed to delete screenshot file: {}", e),
-                        }
+                
+                if let Some(_current_screenshot) = &current_screenshot {
+                    // Remove any existing dialog first
+                    for entity in existing_dialog.iter() {
+                        commands.entity(entity).despawn();
                     }
-                    // Remove the resource
-                    commands.remove_resource::<CurrentScreenshotImage>();
+                    
+                    // Spawn delete confirmation dialog
+                    if let Some(window) = &screenshot_window {
+                        spawn_delete_confirmation_dialog(&mut commands, window.0);
+                    }
+                } else {
+                    eprintln!("No screenshot data available");
                 }
             }
             _ => {}
@@ -368,50 +378,74 @@ fn yes_button_interaction(
     images: Res<Assets<Image>>,
     mut commands: Commands,
     screenshot_window: Option<Res<ScreenshotWindowSurface>>,
-    existing_dialog: Query<Entity, With<SaveDialog>>
+    save_dialog: Query<Entity, With<SaveDialog>>,
+    delete_dialog: Query<Entity, With<DeleteDialog>>,
+    screenshot_overlay: Query<Entity, With<ScreenshotOverlay>>,
 ) {
     for interaction in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
-                println!("Yes button was pressed - saving screenshot");
+                // Check if we're in a save dialog
+                if !save_dialog.is_empty() {
+                    println!("Yes button was pressed - saving screenshot");
 
-                if let Some(current_screenshot) = &current_screenshot {
-                    if let Some(image) = images.get(&current_screenshot.image) {
-                        // Remove the confirmation dialog first
-                        for entity in existing_dialog.iter() {
-                            commands.entity(entity).despawn();
-                        }
+                    if let Some(current_screenshot) = &current_screenshot {
+                        if let Some(image) = images.get(&current_screenshot.image) {
+                            // Remove the confirmation dialog first
+                            for entity in save_dialog.iter() {
+                                commands.entity(entity).despawn();
+                            }
 
-                        // Try to save the image
-                        match
-                            super::plugin::save_image_as_png(image, &current_screenshot.output_path)
-                        {
-                            Ok(()) => {
-                                println!("Screenshot saved successfully");
+                            // Try to save the image
+                            match
+                                super::plugin::save_image_as_png(image, &current_screenshot.output_path)
+                            {
+                                Ok(()) => {
+                                    println!("Screenshot saved successfully");
 
-                                // Spawn save success dialog
-                                if let Some(window) = &screenshot_window {
-                                    spawn_save_success_dialog(&mut commands, window.0);
+                                    // Spawn save success dialog
+                                    if let Some(window) = &screenshot_window {
+                                        spawn_save_success_dialog(&mut commands, window.0);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to save screenshot: {}", e);
+
+                                    // Spawn error dialog
+                                    if let Some(window) = &screenshot_window {
+                                        spawn_error_dialog(
+                                            &mut commands,
+                                            window.0,
+                                            &format!("Failed to save: {}", e)
+                                        );
+                                    }
                                 }
                             }
-                            Err(e) => {
-                                eprintln!("Failed to save screenshot: {}", e);
-
-                                // Spawn error dialog
-                                if let Some(window) = &screenshot_window {
-                                    spawn_error_dialog(
-                                        &mut commands,
-                                        window.0,
-                                        &format!("Failed to save: {}", e)
-                                    );
-                                }
-                            }
+                        } else {
+                            eprintln!("Screenshot image not found in assets");
                         }
                     } else {
-                        eprintln!("Screenshot image not found in assets");
+                        eprintln!("No screenshot data available");
                     }
-                } else {
-                    eprintln!("No screenshot data available");
+                }
+                // Check if we're in a delete dialog
+                else if !delete_dialog.is_empty() {
+                    info!("Yes button was pressed - deleting screenshot");
+
+                    // Remove the confirmation dialog first
+                    for entity in delete_dialog.iter() {
+                        commands.entity(entity).despawn();
+                    }
+
+                    // Remove the CurrentScreenshotImage resource
+                    commands.remove_resource::<CurrentScreenshotImage>();
+                    info!("CurrentScreenshotImage resource removed");
+
+                    // Despawn all screenshot overlay UI entities
+                    for entity in screenshot_overlay.iter() {
+                        commands.entity(entity).despawn();
+                    }
+                    info!("Screenshot overlay UI despawned");
                 }
             }
             _ => {}
@@ -422,14 +456,14 @@ fn yes_button_interaction(
 fn cancel_button_interaction(
     mut interaction_query: Query<&Interaction, (Changed<Interaction>, With<CancelButton>)>,
     mut commands: Commands,
-    existing_dialog: Query<Entity, With<SaveDialog>>
+    existing_dialog: Query<Entity, Or<(With<SaveDialog>, With<DeleteDialog>)>>,
 ) {
     for interaction in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
-                println!("Cancel button was pressed - canceling save");
+                println!("Cancel button was pressed - canceling operation");
 
-                // Remove the confirmation dialog
+                // Remove any confirmation dialog
                 for entity in existing_dialog.iter() {
                     commands.entity(entity).despawn();
                 }
@@ -441,7 +475,7 @@ fn cancel_button_interaction(
 
 fn auto_hide_dialogs(
     mut commands: Commands,
-    mut dialog_query: Query<(Entity, &mut DialogTimer), With<SaveDialog>>,
+    mut dialog_query: Query<(Entity, &mut DialogTimer), Or<(With<SaveDialog>, With<DeleteDialog>)>>,
     time: Res<Time>
 ) {
     for (entity, mut timer) in dialog_query.iter_mut() {
@@ -559,6 +593,161 @@ fn spawn_save_confirmation_dialog(commands: &mut Commands, parent: Entity) {
                             ));
                         });
                 });
+        })
+        .id();
+
+    commands.entity(parent).add_child(dialog);
+}
+
+fn spawn_delete_confirmation_dialog(commands: &mut Commands, parent: Entity) {
+    let dialog = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                width: Val::Px(316.0),
+                height: Val::Px(124.0),
+                margin: UiRect {
+                    left: Val::Px(-158.0), // Half of width for centering
+                    top: Val::Px(-62.0), // Half of height for centering
+                    ..default()
+                },
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(Val::Px(2.0)),
+                border: UiRect::all(Val::Px(2.0)),
+                ..default()
+            },
+            BorderRadius::all(Val::Px(12.0)),
+            BackgroundColor(Color::BLACK),
+            DeleteDialog,
+            DialogOverlay,
+        ))
+        .with_children(|dialog| {
+            // Delete confirmation message
+            dialog.spawn((
+                Text::new("Move screenshot to Trash?"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Node {
+                    margin: UiRect::bottom(Val::Px(20.0)),
+                    ..default()
+                },
+            ));
+
+            // Button container
+            dialog
+                .spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                ))
+                .with_children(|buttons| {
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(2.0)),
+                                ..default()
+                            },
+                            CancelButton,
+                        ))
+                        .with_children(|button| {
+                            button.spawn((
+                                Text::new("Cancel"),
+                                TextFont {
+                                    font_size: 16.0,
+                                    ..default()
+                                },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+
+                    // Separator line
+                    buttons.spawn((
+                        Node {
+                            width: Val::Px(1.0),
+                            height: Val::Px(35.0),
+                            margin: UiRect::horizontal(Val::Px(50.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.5, 0.5, 0.5, 0.8)),
+                    ));
+
+                    buttons
+                        .spawn((
+                            Button,
+                            Node {
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(2.0)),
+                                ..default()
+                            },
+                            YesButton,
+                        ))
+                        .with_children(|button| {
+                            button.spawn((
+                                Text::new("Yes"),
+                                TextFont {
+                                    font_size: 16.0,
+                                    ..default()
+                                },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+                });
+        })
+        .id();
+
+    commands.entity(parent).add_child(dialog);
+}
+
+fn spawn_delete_success_dialog(commands: &mut Commands, parent: Entity) {
+    let dialog = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                width: Val::Px(316.0),
+                height: Val::Px(62.0),
+                margin: UiRect {
+                    left: Val::Px(-158.0), // Half of width for centering
+                    top: Val::Px(-31.0), // Half of height for centering
+                    ..default()
+                },
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(Val::Px(2.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.265, 0.265, 0.265, 1.0)),
+            BorderRadius::all(Val::Px(12.0)),
+            DeleteDialog,
+            DialogOverlay,
+            DialogTimer(Timer::from_seconds(3.0, TimerMode::Once)), // Auto-hide after 3 seconds
+        ))
+        .with_children(|parent| {
+            // Success message
+            parent.spawn((
+                Text::new("Moved to Trash"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
         })
         .id();
 
