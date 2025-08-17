@@ -20,19 +20,25 @@ pub struct ScreenshotUiPlugin;
 impl Plugin for ScreenshotUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, trigger_screenshot_window)
-        .add_systems(Update, despawn_screenshot_window)
-        .add_plugins(ScreenshotPlugin);
-
+            .add_systems(
+                Update,
+                spawn_screenshot_ui.run_if(resource_exists_and_changed::<ScreenshotWindowSurface>)
+            )
+            .add_systems(Update, despawn_screenshot_window)
+            .add_plugins(ScreenshotPlugin);
     }
 }
 
+use std::path::PathBuf;
+
 #[derive(Resource)]
-pub struct ScreenshotWindowSurface(pub Entity);
+pub struct ScreenshotWindowSurface(pub Entity, pub Handle<Image>);
 
 fn trigger_screenshot_window(
     mut commands: Commands,
     mut screenshot_events: EventReader<ScreenshotEvent>,
-    q_existing_overlay: Query<Entity, With<ScreenshotWindow>>
+    q_existing_overlay: Query<Entity, With<ScreenshotWindow>>,
+    asset_server: Res<AssetServer>
 ) {
     for _event in screenshot_events.read() {
         // Close any existing overlay first
@@ -68,8 +74,11 @@ fn trigger_screenshot_window(
                 BackgroundColor(Color::BLACK),
             ))
             .id();
-
-        commands.insert_resource(ScreenshotWindowSurface(screenshot_window_surface));
+        let screenshot_path = _event.output_path.clone();
+        let screenshot_asset = asset_server.load("icons/camera.png");
+        commands.insert_resource(
+            ScreenshotWindowSurface(screenshot_window_surface, screenshot_asset)
+        );
     }
 }
 
@@ -78,8 +87,7 @@ fn trigger_screenshot_window(
 fn despawn_screenshot_window(
     mut commands: Commands,
     q_existing_window: Query<Entity, With<ScreenshotOverlay>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    
+    keys: Res<ButtonInput<KeyCode>>
 ) {
     if keys.just_pressed(KeyCode::KeyA) {
         println!("Despawning screenshot overlay window");
@@ -87,6 +95,63 @@ fn despawn_screenshot_window(
             commands.entity(entity).despawn();
         }
     }
+}
+
+// fn spawn_image_node(image: Handle<Image>) -> impl Bundle {
+//     (
+//         Node {
+//             width: Val::Percent(100.0),
+//             height: Val::Auto,
+//             align_items: AlignItems::Center,
+//             justify_content: JustifyContent::Center,
+//             ..default()
+//         },
+//         children![(
+//             ImageNode::new(image),
+//             Node {
+//                 width: Val::Percent(75.0),
+//                 height: Val::Percent(75.0),
+//                 ..Default::default()
+//             },
+//         )],
+//     )
+// }
+
+fn spawn_screenshot_ui(mut commands: Commands, screenshot_window: Res<ScreenshotWindowSurface>) {
+    let screenshot_image = screenshot_window.1.clone();
+    commands.entity(screenshot_window.0).with_children(|parent| {
+        parent.spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Auto,
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            children![
+                (
+                    ImageNode::new(screenshot_image),
+                    Node {
+                        // add padding here instead of less width and height to add space
+                        width: Val::Percent(75.0),
+                        height: Val::Percent(75.0),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Auto,
+                        flex_direction: FlexDirection::Row,
+                        ..default()
+                    },
+                    BackgroundColor(Color::WHITE),
+                    children![
+
+                    ],
+                )
+            ],
+        ));
+    });
 }
 
 fn spawn_screenshot_overlay_window(commands: &mut Commands) {}
