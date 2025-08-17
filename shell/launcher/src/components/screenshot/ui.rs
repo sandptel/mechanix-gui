@@ -161,38 +161,53 @@ fn spawn_screenshot_ui(
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
+                justify_content: JustifyContent::SpaceBetween, // Push buttons to bottom
                 align_items: AlignItems::Center,
-                padding: UiRect::all(Val::Percent(5.0)), // 5% padding around the entire content
+                padding: UiRect::all(Val::Percent(2.0)), // Reduced padding for more space
                 ..default()
             },
             children![
-                // Screenshot image container
+                // Screenshot image container - takes most of the space
                 (
                     Node {
                         width: Val::Percent(100.0),
-                        height: Val::Percent(95.0),
+                        flex_grow: 1.0, // Take remaining space after buttons
+                        justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
-                        padding: UiRect::all(Val::Percent(5.0)), // Small margin between image and buttons
+                        padding: UiRect::all(Val::Percent(1.0)), // Minimal padding
                         ..default()
                     },
                     children![(
-                        ImageNode::new(screenshot_image),
+                        // Preview container without background and border
                         Node {
-                            width: Val::Auto,
-                            height: Val::Auto,
-                            ..Default::default()
+                            width: Val::Percent(95.0), // Increased from 90% to 95%
+                            height: Val::Percent(95.0), // Increased from 90% to 95%
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
                         },
+                        children![(
+                            ImageNode::new(screenshot_image),
+                            Node {
+                                max_width: Val::Percent(98.0), // Increased from 95% to 98%
+                                max_height: Val::Percent(98.0), // Increased from 95% to 98%
+                                width: Val::Auto, // Auto width to maintain aspect ratio
+                                height: Val::Auto, // Auto height to maintain aspect ratio
+                                ..default()
+                            },
+                        )],
                     )],
                 ),
-                // Button container box
+                // Button container box - positioned at bottom
                 (
                     Node {
-                        width: Val::Px(540.0),
-                        height: Val::Px(106.0),
+                        width: Val::Percent(100.0), // Take full width
+                        height: Val::Px(106.0), // Fixed height for buttons
                         flex_direction: FlexDirection::Row,
                         justify_content: JustifyContent::SpaceEvenly,
                         align_items: AlignItems::Center,
+                        flex_shrink: 0.0, // Don't shrink this container
+                        position_type: PositionType::Relative, // Ensure it stays in document flow
                         ..default()
                     },
                     BackgroundColor(Color::linear_rgba(0.183, 0.183, 0.183, 1.0)),
@@ -276,7 +291,7 @@ fn save_button_interaction(
             Interaction::Pressed => {
                 println!("Save button was pressed");
                 
-                if let Some(current_screenshot) = &current_screenshot {
+                if let Some(_current_screenshot) = &current_screenshot {
                     // Remove any existing dialog first
                     for entity in existing_dialog.iter() {
                         commands.entity(entity).despawn();
@@ -284,7 +299,7 @@ fn save_button_interaction(
                     
                     // Spawn save confirmation dialog
                     if let Some(window) = &screenshot_window {
-                        spawn_save_confirmation_dialog(&mut commands, window.0, current_screenshot.image.clone());
+                        spawn_save_confirmation_dialog(&mut commands, window.0);
                     }
                 } else {
                     eprintln!("No screenshot data available");
@@ -418,17 +433,17 @@ fn auto_hide_dialogs(
     }
 }
 
-fn spawn_save_confirmation_dialog(commands: &mut Commands, parent: Entity, screenshot_image: Handle<Image>) {
+fn spawn_save_confirmation_dialog(commands: &mut Commands, parent: Entity) {
     let dialog = commands.spawn((
         Node {
             position_type: PositionType::Absolute,
             left: Val::Percent(50.0),
             top: Val::Percent(50.0),
-            width: Val::Px(400.0),
-            height: Val::Px(500.0),
+            width: Val::Px(300.0),
+            height: Val::Px(200.0),
             margin: UiRect {
-                left: Val::Px(-200.0), // Half of width for centering
-                top: Val::Px(-250.0),   // Half of height for centering
+                left: Val::Px(-150.0), // Half of width for centering
+                top: Val::Px(-100.0),   // Half of height for centering
                 ..default()
             },
             justify_content: JustifyContent::Center,
@@ -444,32 +459,6 @@ fn spawn_save_confirmation_dialog(commands: &mut Commands, parent: Entity, scree
         SaveDialog,
         DialogOverlay,
     )).with_children(|dialog| {
-        // Screenshot preview container
-        dialog.spawn((
-            Node {
-                width: Val::Px(320.0),
-                height: Val::Px(240.0),
-                margin: UiRect::bottom(Val::Px(20.0)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border: UiRect::all(Val::Px(1.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 1.0)),
-            BorderColor(Color::srgba(0.3, 0.3, 0.3, 1.0)),
-            BorderRadius::all(Val::Px(8.0)),
-        )).with_children(|preview_container| {
-            // Screenshot image
-            preview_container.spawn((
-                ImageNode::new(screenshot_image),
-                Node {
-                    width: Val::Percent(90.0),
-                    height: Val::Percent(90.0),
-                    ..default()
-                },
-            ));
-        });
-        
         // Save confirmation message
         dialog.spawn((
             Text::new("Save screenshot to Screenshots folder?"),
