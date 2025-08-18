@@ -123,6 +123,26 @@ fn get_screenshot_path() -> PathBuf {
     }
 }
 
+/// Convert BGRA pixel data to RGBA format by swapping blue and red channels
+fn bgra_to_rgba(bgra_data: &[u8]) -> Vec<u8> {
+    let mut rgba_data = Vec::with_capacity(bgra_data.len());
+    
+    // Process 4 bytes at a time (BGRA -> RGBA)
+    for chunk in bgra_data.chunks_exact(4) {
+        if chunk.len() == 4 {
+            let b = chunk[0];
+            let g = chunk[1];
+            let r = chunk[2];
+            let a = chunk[3];
+            
+            // Swap B and R channels: BGRA -> RGBA
+            rgba_data.extend_from_slice(&[r, g, b, a]);
+        }
+    }
+    
+    rgba_data
+}
+
 pub struct ScreenshotPlugin;
 
 impl Plugin for ScreenshotPlugin {
@@ -345,7 +365,7 @@ fn process_screenshot_frames(
                         (cropped_data, *width, *height)
                     }
                 };
-
+                let final_data = bgra_to_rgba(&final_data);
                 // Create Bevy Image
                 let bevy_image = Image::new(
                     Extent3d {
