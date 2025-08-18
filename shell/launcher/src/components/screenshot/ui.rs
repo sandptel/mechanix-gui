@@ -102,6 +102,7 @@ fn trigger_screenshot_window(
             },
             ScreenshotWindow,
             BackgroundColor(Color::BLACK),
+            // BackgroundColor(Color::linear_rgba(0.265, 0.265, 0.265, 1.0)),
         ))
         .id();
 
@@ -214,7 +215,7 @@ fn spawn_screenshot_ui(
                         position_type: PositionType::Relative, // Ensure it stays in document flow
                         ..default()
                     },
-                    BackgroundColor(Color::linear_rgba(0.183, 0.183, 0.183, 1.0)),
+                    BackgroundColor(Color::BLACK),
                     children![
                         // Save Button
                         (
@@ -226,6 +227,8 @@ fn spawn_screenshot_ui(
                                 align_items: AlignItems::Center,
                                 ..default()
                             },
+                            BorderRadius::all(Val::Px(1.0)),
+                            BorderColor(Color::WHITE),
                             SaveButton,
                             children![(
                                 ImageNode::new(save_icon),
