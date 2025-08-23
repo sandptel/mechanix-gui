@@ -34,7 +34,7 @@ impl FreedesktopNotificationService {
         (Connection, FreedesktopNotificationService, Receiver<FreedesktopNotificationEvent>)
     > {
         let connection = Connection::session().await.map_err(|e|
-            Error::DbusString(format!("Failed to create D-Bus connection: {}", e))
+            Error::DbusString(format!("Other notification service is running {}", e))
         )?;
 
         let (notification_service, receiver) = FreedesktopNotificationService::new();

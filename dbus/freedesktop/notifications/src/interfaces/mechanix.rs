@@ -13,6 +13,8 @@ use crate::database::{
     get_all_notifications_from_db,
 };
 
+use tracing::{warn,info};
+
 #[derive(Debug, Clone)]
 pub struct MechanixNotificationService {
     freedesktop_signal_emitter: Option<SignalEmitter<'static>>,
@@ -66,12 +68,12 @@ impl MechanixNotificationService {
 
                         if !notification.is_transient() {
                             if let Err(e) = add_notification_to_db(id, &notification).await {
-                                eprintln!("Failed to add notification to database: {}", e);
+                                warn!("Failed to add notification to database: {}", e);
                             } else {
-                                println!("Notification {}, added to database", &id);
+                                info!("Notification {}, added to database", &id);
                             }
                         } else {
-                            println!(
+                            info!(
                                 "Notification {}, is transient, will not be stored in databse",
                                 &id
                             );
@@ -91,7 +93,7 @@ impl MechanixNotificationService {
                         }
 
                         if let Err(e) = remove_notification_from_db(id).await {
-                            eprintln!("Failed to remove notification from database: {}", e);
+                            warn!("Failed to remove notification from database: {}", e);
                         }
 
                         let _ = Self::notification_closed(&signal_emitter, id).await;
@@ -106,7 +108,7 @@ impl MechanixNotificationService {
         // Setup freedesktop notification service
         let (freedesktop_connection, _service, receiver) =
             FreedesktopNotificationService::create_connection().await.map_err(|e|
-                zbus::Error::Failure(format!("Failed to create freedesktop connection: {}", e))
+                zbus::Error::Failure(format!("other application running as notifcation service causing this {}", e))
             )?;
 
         let freedesktop_signal_emitter = SignalEmitter::from_parts(
@@ -207,14 +209,14 @@ impl MechanixNotificationService {
             match get_all_notifications_from_db().await {
                 Ok(db_notifications) => {
                     if !db_notifications.is_empty() {
-                        println!("Loaded {} notifications from database", db_notifications.len());
+                        info!("Loaded {} notifications from database", db_notifications.len());
                         db_notifications
                     } else {
                         HashMap::new()
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to load notifications from database: {}", e);
+                    warn!("Failed to load notifications from database: {}", e);
                     HashMap::new()
                 }
             }
