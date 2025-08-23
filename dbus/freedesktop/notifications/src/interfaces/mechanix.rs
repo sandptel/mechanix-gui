@@ -3,7 +3,7 @@ use zvariant::ObjectPath;
 use tokio::sync::mpsc::Receiver;
 use crate::interfaces::freedesktop::FreedesktopNotificationService;
 use crate::interfaces::freedesktop::{ FreedesktopNotificationEvent };
-use crate::notification::{ self, Notification };
+use crate::notification::{ Notification };
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
@@ -12,11 +12,11 @@ use crate::database::{
     remove_notification_from_db,
     get_all_notifications_from_db,
 };
-use serde::{ Serialize, Deserialize };
+
 #[derive(Debug, Clone)]
 pub struct MechanixNotificationService {
     freedesktop_signal_emitter: Option<SignalEmitter<'static>>,
-    // Add shared storage for notifications as HashMap
+   // Add shared storage for notifications as HashMap
     notifications: Arc<RwLock<HashMap<u32, Notification>>>,
 }
 
@@ -59,24 +59,22 @@ impl MechanixNotificationService {
             while let Some(event) = event_receiver.recv().await {
                 match event {
                     FreedesktopNotificationEvent::Notify(id, notification) => {
-                        /// Store the notification
                         {
                             let mut notifs = notifications.write().await;
                             notifs.insert(id, notification.clone());
                         }
 
-                        /// Store in database
-                        // "transient": BOOLEAN	=> When set the server will treat the notification as transient and by-pass the server's persistence capability, if it should exist. 
                         if !notification.is_transient() {
                             if let Err(e) = add_notification_to_db(id, &notification).await {
                                 eprintln!("Failed to add notification to database: {}", e);
+                            } else {
+                                println!("Notification {}, added to database", &id);
                             }
-                            else{
-                                println!("Notification {}, added to database",&id);
-                            }
-                        }
-                        else{
-                            println!("Notification {}, is transient, will not be stored in databse",&id);
+                        } else {
+                            println!(
+                                "Notification {}, is transient, will not be stored in databse",
+                                &id
+                            );
                         }
 
                         let _ = Self::notification_received(
@@ -184,9 +182,10 @@ impl MechanixNotificationService {
 
     /// Close a notification with a specific reason
     async fn close_notification_with_reason(&self, id: u32, reason: u32) -> fdo::Result<()> {
-
-        if self.is_notification_resident(id).await{
-            return Err(fdo::Error::Failed("Resident Notification can only be closed by Sender".to_string()));
+        if self.is_notification_resident(id).await {
+            return Err(
+                fdo::Error::Failed("Resident Notification can only be closed by Sender".to_string())
+            );
         }
         if let Some(emitter) = &self.freedesktop_signal_emitter {
             FreedesktopNotificationService::notification_closed(emitter, id, reason).await.map_err(
@@ -200,11 +199,11 @@ impl MechanixNotificationService {
     /// Get all active notifications
     async fn get_all_notifications(&self) -> HashMap<u32, Notification> {
         let notifications = self.notifications.read().await;
-        
+
         // If no notifications in memory, load from database
         if notifications.is_empty() {
             drop(notifications); // Release read lock
-            
+
             match get_all_notifications_from_db().await {
                 Ok(db_notifications) => {
                     if !db_notifications.is_empty() {

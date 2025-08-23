@@ -4,7 +4,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 use std::sync::atomic::{ AtomicU32, Ordering };
 use zbus::object_server::SignalEmitter;
 use std::sync::Arc;
-use tokio::{ sync::mpsc::{ Receiver, Sender, channel }, sync::RwLock };
+use tokio::{ sync::mpsc::{ Receiver, Sender, channel }};
 use zbus::Connection;
 use crate::errors::{ Error, Result };
 use crate::notification::Notification;

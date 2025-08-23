@@ -1,8 +1,8 @@
 use std::collections::HashMap;
+use tracing::{ error, info, warn };
 use serde::{ Serialize, Deserialize };
 use zvariant::{ OwnedValue, Structure, Type };
-use std::path::{PathBuf};
-use std::fs;
+use std::path::{ PathBuf };
 use gdk_pixbuf::Pixbuf;
 use glib::Bytes;
 use std::time::Duration;
@@ -47,9 +47,8 @@ impl Notification {
         Hints::from_hashmap(&self.hints)
     }
 
-    pub fn get_expire_timeout(&self)-> std::time::Duration
-    {
-        if self.expire_timeout ==0 || self.is_resident() {
+    pub fn get_expire_timeout(&self) -> std::time::Duration {
+        if self.expire_timeout == 0 || self.is_resident() {
             Duration::from_millis(0 as u64)
         } else if self.expire_timeout == -1 {
             Duration::from_millis(DEFAULT_EXPIRE_TIMEOUT as u64)
@@ -133,16 +132,15 @@ impl Image {
         match self {
             Image::Name(name) => {
                 // Look up icon in theme and sav
-                if let Some(icon) = lookup("firefox").find() {
+                if let Some(icon) = lookup(name).find() {
                     // Get the best matching file path (there can be multiple for different sizes/types)
-                    if let source_path = icon {
-                        std::fs::copy(&source_path, &path)?;
-                        println!("Saved icon to {}", source_path.display());
+                    if let Ok(_) = std::fs::copy(&icon, &path) {
+                        info!("Saved icon to {}", &icon.display());
                     } else {
-                        println!("No icon file paths found for 'firefox'");
+                        warn!("No icon file paths found for {}", &name);
                     }
                 } else {
-                    println!("No icon found for 'firefox'");
+                    warn!("No icon found for {}", &name);
                 }
                 Ok(())
             }
@@ -311,7 +309,7 @@ impl Hints {
                     }
                 }
                 unknown_field => {
-                    eprintln!("Unknown Field:{}", unknown_field);
+                    error!("Unknown Field:{}", unknown_field);
                     // Unknown hint, ignore
                 }
             }
