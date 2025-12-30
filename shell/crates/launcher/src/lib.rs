@@ -27,6 +27,8 @@ pub fn run() {
 
         notifications::run_app(cx);
 
+        hardware_buttons::run_app(cx);
+
         cx.activate(true);
         cx.refresh_windows();
     });
