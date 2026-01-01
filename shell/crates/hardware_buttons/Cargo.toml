@@ -18,3 +18,4 @@ futures-timer = { workspace = true }
 log = { workspace = true }
 mechanix-hw-buttons = { path = "../../../shared/hw-buttons" }
 zbus = { workspace = true }
+power_options = { path = "../power_options" }

@@ -33,10 +33,7 @@ pub fn init(cx: &mut App) {
     cx.spawn(async move |app| {
         while let Some(event) = rx.next().await {
             let _ = app.update(|cx| {
-                let handled = {
-                    let state = ButtonState::global_mut(cx);
-                    state.handle_event(event)
-                };
+                let handled = ButtonState::handle_event(cx, event);
 
                 if handled {
                     return;
