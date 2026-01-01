@@ -1,4 +1,4 @@
-use commons::assets::Assets;
+use gpui::layer_shell::{Anchor, KeyboardInteractivity, Layer, LayerShellOptions};
 use gpui::*;
 
 mod ui;
@@ -10,29 +10,30 @@ pub mod prelude {
     pub use crate::run_app;
 }
 
-pub fn run_app(cx: &mut App) {
-    let application = Application::new().with_assets(Assets {});
-    application.run(|cx| {
-        let window_bounds =
-            WindowBounds::Windowed(Bounds::centered(None, size(px(540.0), px(620.0)), cx));
+const WINDOW_NAMESPACE: &str = "mechanix.power_options";
+const WINDOW_WIDTH: f32 = 540.0;
+const WINDOW_HEIGHT: f32 = 620.0;
 
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(window_bounds),
-                // kind: WindowKind::LayerShell(LayerShellOptions {
-                //     namespace: "mechanix.settings_drawer".to_string(),
-                //     layer: Layer::Top,
-                //     anchor: Anchor::LEFT | Anchor::TOP | Anchor::RIGHT | Anchor::BOTTOM,
-                //     keyboard_interactivity: KeyboardInteractivity::None,
-                //     margin: None,
-                //     exclusive_zone: None,
-                //     ..Default::default()
-                // }),
+pub fn run_app(cx: &mut App) {
+    let window_bounds =
+        WindowBounds::Windowed(Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx));
+
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(window_bounds),
+            window_background: WindowBackgroundAppearance::Transparent,
+            kind: WindowKind::LayerShell(LayerShellOptions {
+                namespace: WINDOW_NAMESPACE.into(),
+                layer: Layer::Overlay,
+                anchor: Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT,
+                keyboard_interactivity: KeyboardInteractivity::None,
+                exclusive_zone: Some(px(0.0)),
                 ..Default::default()
-            },
-            |_window, cx| cx.new(|cx| PowerOptions::new(cx)),
-        )
-        .unwrap();
-        cx.activate(true);
-    });
+            }),
+            ..Default::default()
+        },
+        |_window, cx| cx.new(|cx| PowerOptions::new(cx)),
+    )
+    .expect("failed to open power options overlay");
+    cx.activate(true);
 }
