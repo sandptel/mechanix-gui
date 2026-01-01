@@ -7,6 +7,8 @@ const WING_WIDTH: f32 = 180.;
 const WING_HEIGHT: f32 = 38.;
 const CARD_WIDTH: f32 = 540.;
 const CARD_HEIGHT: f32 = 620.;
+const UPWARD_CANCEL_DISTANCE: f32 = 25.0;
+const MAX_UPWARD_DRAG: f32 = 60.0;
 
 const INIT_ANIMATE_HEIGHT: f32 = 0.0; // Start from top
 
@@ -23,11 +25,13 @@ pub struct PowerOptions {
     is_initial_animation_done: bool,
 
     // Thresholds
-    drag_threshold: f32,    // Distance needed to complete swipe
-    max_drag_distance: f32, // Maximum draggable distance (to bottom)
+    drag_threshold: f32,
+    max_drag_distance: f32,
 
     // swipe upwards- go back
     drag_start_y: f32,
+    upward_cancel_distance: f32,
+    max_upward_drag: f32,
 }
 
 impl PowerOptions {
@@ -41,8 +45,9 @@ impl PowerOptions {
             is_initial_animation_done: false,
             drag_threshold: 200.0,
             max_drag_distance: CARD_HEIGHT,
-
             drag_start_y: 0.0,
+            upward_cancel_distance: UPWARD_CANCEL_DISTANCE,
+            max_upward_drag: MAX_UPWARD_DRAG,
         };
 
         // Start initial reveal animation
@@ -50,10 +55,11 @@ impl PowerOptions {
         this
     }
 
-    fn handle_upward_swipe(&mut self, cx: &mut Context<Self>) {
-        // Go back / close
-        println!("Go back=====>");
-        // self.snap_to(0.0, cx);
+    fn handle_upward_swipe(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Dismiss the overlay when user intentionally drags upward to cancel.
+        println!("Upward swipe detected, closing power options overlay.");
+        window.remove_window();
+        cx.notify();
     }
 
     fn animate_initial_reveal(&mut self, cx: &mut Context<Self>) {
@@ -147,10 +153,13 @@ impl PowerOptions {
 
 impl Render for PowerOptions {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let size = window.bounds().size;
+        let size: Size<Pixels> = window.bounds().size;
         let max_drag = self.max_drag_distance;
         let threshold = self.drag_threshold;
         let initial_h = self.initial_height;
+        let max_up_drag = self.max_upward_drag;
+        let upward_cancel_distance = self.upward_cancel_distance;
+        let _ = size; // keep viewport info accessible for future layout work
 
         // Calculate dynamic height for the amber card
         let amber_card_height = if self.is_initial_animation_done {
@@ -180,9 +189,11 @@ impl Render for PowerOptions {
             .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
                 if let Some(offset) = this.drag_offset {
                     let new_y = event.position.y.to_f64() as f32 - offset;
-                    // The maximum drag should be limited so total height doesn't exceed CARD_HEIGHT
-                    let max_position = CARD_HEIGHT - initial_h;
-                    this.position_y = new_y.clamp(0.0, max_position);
+                    // Respect both the configured drag limit and total card height
+                    let clamped_max_drag = max_drag.max(initial_h);
+                    let max_position = (clamped_max_drag - initial_h).min(CARD_HEIGHT - initial_h);
+                    let min_position = -max_up_drag;
+                    this.position_y = new_y.clamp(min_position, max_position);
                     cx.notify();
                 }
             }))
@@ -194,19 +205,18 @@ impl Render for PowerOptions {
                         this.drag_offset = None;
 
                         let upward_distance = this.drag_start_y - this.position_y;
-                        if upward_distance > 50.0 {
+                        if upward_distance > upward_cancel_distance {
                             // Swiped upward significantly
-                            this.handle_upward_swipe(cx);
-                            this.snap_to(0.0, cx);
-                            cx.notify();
+                            this.handle_upward_swipe(window, cx);
                             return;
                         }
 
                         // After initial animation, card is at 310px (CARD_HEIGHT / 2)
                         // Remaining space from 310 to 620 is also 310px
-                        // If dragged more than half of remaining (155px), snap to bottom
+                        // Use the configured drag threshold (capped by half remaining) to snap
                         let remaining_space = CARD_HEIGHT - initial_h; // 310px remaining
-                        let half_remaining = remaining_space / 2.0; // 155px threshold
+                        let half_remaining = remaining_space / 2.0; // 155px baseline threshold
+                        let snap_threshold = threshold.min(half_remaining);
 
                         println!(
                             "position_y: {}, half_remaining: {}, remaining_space: {}",
@@ -214,7 +224,7 @@ impl Render for PowerOptions {
                         );
 
                         // Determine snap target
-                        let target = if this.position_y >= half_remaining {
+                        let target = if this.position_y >= snap_threshold {
                             // Dragged more than half of remaining space - snap to bottom
                             remaining_space // This will make total height = 620
                         } else {
