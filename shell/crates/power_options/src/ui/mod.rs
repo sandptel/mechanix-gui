@@ -123,6 +123,8 @@ impl PowerOptions {
                             if total_height >= CARD_HEIGHT {
                                 this.power_off = true;
                                 println!("Power off triggered!");
+
+                                // todo!("Implement actual power off logic here. To fix the Blank Screen at the end");
                             }
 
                             cx.notify();
@@ -160,6 +162,26 @@ impl Render for PowerOptions {
         let max_up_drag = self.max_upward_drag;
         let upward_cancel_distance = self.upward_cancel_distance;
         let _ = size; // keep viewport info accessible for future layout work
+
+        // If powered off, show simple "Bye" message and stop interaction
+
+        if self.power_off {
+            return div()
+                .flex()
+                .flex_col()
+                .w(px(CARD_WIDTH))
+                .h(px(CARD_HEIGHT))
+                .bg(rgb(0x000000))
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_xl()
+                        .text_color(rgb(0xFFFFFF))
+                        .font_weight(FontWeight::BOLD)
+                        .child("Bye Comet!"),
+                );
+        }
 
         // Calculate dynamic height for the amber card
         let amber_card_height = if self.is_initial_animation_done {
